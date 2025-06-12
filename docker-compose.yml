@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  vnet-app:
+    build: .
+    ports:
+      - "5000:5000"
+    container_name: vnet-flask-app
+    restart: unless-stopped
+    environment:
+      - FLASK_ENV=production
+    networks:
+      - vnet-network
+
+networks:
+  vnet-network:
+    driver: bridge 
