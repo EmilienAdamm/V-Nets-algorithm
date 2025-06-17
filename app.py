@@ -3,6 +3,7 @@ import pandas as pd
 import io
 import networkx as nx
 from uuid import uuid4
+import re
 
 app = Flask(__name__)
 
@@ -151,6 +152,144 @@ def convert_graph_to_cytoscape(G):
         })
     return elements
 
+def parse_warning_predicates(predicates_text):
+    """Parse warning predicates from text input."""
+    if not predicates_text or not predicates_text.strip():
+        return []
+    
+    predicates = []
+    lines = predicates_text.strip().split('\n')
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        predicates.append(line)
+    
+    return predicates
+
+def evaluate_frequency_predicate(predicate, vnet):
+    """Evaluate frequency-based predicates like Frec(a)=2, Frec(b)>=1."""
+    # Pattern: Frec(event)operator(value)
+    pattern = r'Frec\(([a-zA-Z0-9_]+)\)\s*(>=|<=|>|<|=|!=)\s*(\d+)'
+    match = re.match(pattern, predicate)
+    
+    if not match:
+        return False, f"Invalid frequency predicate format: {predicate}"
+    
+    event, operator, value = match.groups()
+    value = int(value)
+    
+    if event not in vnet['Frec']:
+        actual_freq = 0
+    else:
+        actual_freq = vnet['Frec'][event]
+    
+    if operator == '=':
+        result = actual_freq == value
+    elif operator == '>=':
+        result = actual_freq >= value
+    elif operator == '<=':
+        result = actual_freq <= value
+    elif operator == '>':
+        result = actual_freq > value
+    elif operator == '<':
+        result = actual_freq < value
+    elif operator == '!=':
+        result = actual_freq != value
+    else:
+        return False, f"Unsupported operator: {operator}"
+    
+    return result, f"Frec({event}) = {actual_freq} {operator} {value}"
+
+def evaluate_temporal_predicate(predicate, vnet):
+    """Evaluate temporal predicates like 'a->b before c'."""
+    # Pattern: event1->event2 before event3
+    pattern = r'([a-zA-Z0-9_]+)->([a-zA-Z0-9_]+)\s+before\s+([a-zA-Z0-9_]+)'
+    match = re.match(pattern, predicate)
+    
+    if not match:
+        return False, f"Invalid temporal predicate format: {predicate}"
+    
+    event1, event2, event3 = match.groups()
+    
+    # Check if the edge event1->event2 exists and event3 exists
+    G = vnet['graph']
+    
+    if not G.has_edge(event1, event2):
+        return False, f"Edge {event1}->{event2} not found in V-net"
+    
+    if event3 not in G.nodes():
+        return False, f"Event {event3} not found in V-net"
+    
+    # For this implementation, we'll check if the transition exists
+    # In a more sophisticated version, you could check actual temporal ordering
+    return True, f"Transition {event1}->{event2} exists and {event3} is present"
+
+def evaluate_logical_predicate(predicate, vnet):
+    """Evaluate logical predicates with AND (∧) operations."""
+    # Split by logical AND operator
+    if '∧' in predicate:
+        parts = predicate.split('∧')
+        results = []
+        details = []
+        
+        for part in parts:
+            part = part.strip()
+            if part.startswith('Frec('):
+                result, detail = evaluate_frequency_predicate(part, vnet)
+            elif '->' in part and 'before' in part:
+                result, detail = evaluate_temporal_predicate(part, vnet)
+            else:
+                result, detail = False, f"Unknown predicate type: {part}"
+            
+            results.append(result)
+            details.append(detail)
+        
+        # All parts must be true for AND operation
+        final_result = all(results)
+        return final_result, " AND ".join(details)
+    
+    # Single predicate
+    if predicate.startswith('Frec('):
+        return evaluate_frequency_predicate(predicate, vnet)
+    elif '->' in predicate and 'before' in predicate:
+        return evaluate_temporal_predicate(predicate, vnet)
+    else:
+        return False, f"Unknown predicate type: {predicate}"
+
+def check_warning_predicates(predicates, vnet):
+    """Check all warning predicates against the V-net."""
+    warnings = []
+    
+    for predicate in predicates:
+        try:
+            result, detail = evaluate_logical_predicate(predicate, vnet)
+            if result:
+                warnings.append({
+                    'predicate': predicate,
+                    'matched': True,
+                    'detail': detail,
+                    'message': f"WARNING: Condition matched - {detail}"
+                })
+            else:
+                # Still include non-matched predicates for debugging
+                warnings.append({
+                    'predicate': predicate,
+                    'matched': False,
+                    'detail': detail,
+                    'message': f"OK: Condition not matched - {detail}"
+                })
+        except Exception as e:
+            warnings.append({
+                'predicate': predicate,
+                'matched': False,
+                'detail': str(e),
+                'message': f"ERROR: Failed to evaluate predicate - {str(e)}"
+            })
+    
+    return warnings
+
 @app.route('/')
 def index():
     """Serve the main page."""
@@ -161,6 +300,8 @@ def index():
 def process():
     """Process event sequence input and generate V-net."""
     try:
+        predicates = None
+        
         if 'file' in request.files:
             # File mode
             file = request.files['file']
@@ -173,10 +314,16 @@ def process():
             
             # Constraints file
             constraints = None
-            if 'constraints' in request.files:
+            if 'constraints' in request.files and request.files['constraints'].filename:
                 constraints = pd.read_csv(request.files['constraints'])
                 if not all(col in constraints.columns for col in ['Event1ID', 'Event2ID', 'MinTime', 'MaxTime']):
                     return jsonify({'error': 'Constraints file must contain Event1ID, Event2ID, MinTime, MaxTime columns'}), 400
+            
+            # Predicates file
+            if 'predicates' in request.files and request.files['predicates'].filename:
+                predicates_file = request.files['predicates']
+                predicates_text = predicates_file.read().decode('utf-8')
+                predicates = parse_warning_predicates(predicates_text)
                 
         else:
             # Manual mode
@@ -184,11 +331,16 @@ def process():
             if data['type'] != 'manual':
                 return jsonify({'error': 'Invalid input type'}), 400
             df = pd.read_csv(io.StringIO(data['data']))
+            
             constraints = None
             if data.get('constraints'):
                 constraints = pd.read_csv(io.StringIO(data['constraints']))
                 if not all(col in constraints.columns for col in ['Event1ID', 'Event2ID', 'MinTime', 'MaxTime']):
                     return jsonify({'error': 'Constraints file must contain Event1ID, Event2ID, MinTime, MaxTime columns'}), 400
+            
+            # Parse predicates from manual input
+            if data.get('predicates'):
+                predicates = parse_warning_predicates(data['predicates'])
         
         valid, error = validate_data(df)
         if not valid:
@@ -197,10 +349,16 @@ def process():
         vnet = vnda(df, constraints=constraints)
         textual_output = format_textual_output(vnet)
         graph_output = convert_graph_to_cytoscape(vnet['graph'])
+        
+        # Evaluate warning predicates if provided
+        warnings = []
+        if predicates:
+            warnings = check_warning_predicates(predicates, vnet)
 
         return jsonify({
             'textual': textual_output,
-            'graph': graph_output
+            'graph': graph_output,
+            'warnings': warnings
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500

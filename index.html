@@ -18,15 +18,18 @@
         <h2>Input Event Sequences</h2>
         <h3>Manual Input</h3>
         <textarea id="manual-input" rows="10" cols="50" placeholder="Format:    SequenceID,EventType,Timestamp\nSequence1,e1,1.049432\nSequence1,e2,1.606904"></textarea><br>
+        <h3>Timing Constraints (optional)</h3>
         <textarea id="manual-input-2" rows="10" cols="50" placeholder="Format: Event1ID,Event2ID,MinTime,MaxTime\ne1,2,1.0,2.0"></textarea><br>
+        <h3>Warning Predicates (optional)</h3>
+        <textarea id="manual-input-3" rows="5" cols="60" placeholder="Examples:&#10;Frec(a)=2&#10;b->c before d&#10;Frec(a)>=1 ∧ Frec(b)=0"></textarea><br>
         <button onclick="submitManualInput()">Submit Manual Input</button>
         <h3>File Upload</h3>
         <label>Event Sequences File</label><br>
         <input type="file" id="file-input" accept=".csv,.txt"><br>
-        
         <label>Timing Constraints File (optional)</label><br>
         <input type="file" id="constraints-file" accept=".csv"><br>
-        
+        <label>Warning Predicates File (optional)</label><br>
+        <input type="file" id="predicates-file" accept=".csv"><br>
         <button onclick="submitFileInput()">Upload File</button>
         <div id="error-message" class="error"></div>
     </div>
@@ -34,6 +37,8 @@
         <h2>V-net Output</h2>
         <h3>Textual Representation</h3>
         <pre id="text-output"></pre>
+        <h3>Warning Predicates Evaluation</h3>
+        <div id="warnings-output"></div>
         <h3>Graphical Representation</h3>
         <div id="cy"></div>
     </div>
@@ -42,10 +47,11 @@
         function submitManualInput() {
             const input = document.getElementById('manual-input').value;
             const constraintsInput = document.getElementById('manual-input-2').value;
+            const predicatesInput = document.getElementById('manual-input-3').value;
             fetch('/process', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ type: 'manual', data: input, constraints: constraintsInput })
+                body: JSON.stringify({ type: 'manual', data: input, constraints: constraintsInput, predicates: predicatesInput })
             })
             .then(response => response.json())
             .then(data => displayOutput(data))
@@ -55,8 +61,10 @@
         function submitFileInput() {
             const fileInput = document.getElementById('file-input');
             const constraintsFile = document.getElementById('constraints-file');
+            const predicatesFile = document.getElementById('predicates-file');
             const file = fileInput.files[0];
             const constraints = constraintsFile.files[0];
+            const predicates = predicatesFile.files[0];
             if (!file) {
                 displayError('Please select a file.');
                 return;
@@ -64,6 +72,7 @@
             const formData = new FormData();
             formData.append('file', file);
             formData.append('constraints', constraints);
+            formData.append('predicates', predicates);
             fetch('/process', {
                 method: 'POST',
                 body: formData
@@ -76,6 +85,24 @@
         function displayOutput(data) {
             document.getElementById('error-message').innerText = '';
             document.getElementById('text-output').innerText = data.textual || 'No output generated.';
+            
+            // Display warnings
+            const warningsDiv = document.getElementById('warnings-output');
+            if (data.warnings && data.warnings.length > 0) {
+                let warningsHtml = '<ul>';
+                data.warnings.forEach(warning => {
+                    const className = warning.matched ? 'warning-matched' : 'warning-ok';
+                    const style = warning.matched ? 'color: red; font-weight: bold;' : 'color: green;';
+                    warningsHtml += `<li style="${style}" class="${className}">
+                        <strong>${warning.predicate}:</strong> ${warning.message}
+                    </li>`;
+                });
+                warningsHtml += '</ul>';
+                warningsDiv.innerHTML = warningsHtml;
+            } else {
+                warningsDiv.innerHTML = '<p style="color: gray;">No warning predicates provided.</p>';
+            }
+            
             if (data.graph) {
                 renderGraph(data.graph);
             }
@@ -84,6 +111,7 @@
         function displayError(message) {
             document.getElementById('error-message').innerText = message;
             document.getElementById('text-output').innerText = '';
+            document.getElementById('warnings-output').innerHTML = '';
             document.getElementById('cy').innerHTML = '';
         }
 
