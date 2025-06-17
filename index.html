@@ -18,9 +18,15 @@
         <h2>Input Event Sequences</h2>
         <h3>Manual Input</h3>
         <textarea id="manual-input" rows="10" cols="50" placeholder="Format:    SequenceID,EventType,Timestamp\nSequence1,e1,1.049432\nSequence1,e2,1.606904"></textarea><br>
+        <textarea id="manual-input-2" rows="10" cols="50" placeholder="Format: Event1ID,Event2ID,MinTime,MaxTime\ne1,2,1.0,2.0"></textarea><br>
         <button onclick="submitManualInput()">Submit Manual Input</button>
         <h3>File Upload</h3>
+        <label>Event Sequences File</label><br>
         <input type="file" id="file-input" accept=".csv,.txt"><br>
+        
+        <label>Timing Constraints File (optional)</label><br>
+        <input type="file" id="constraints-file" accept=".csv"><br>
+        
         <button onclick="submitFileInput()">Upload File</button>
         <div id="error-message" class="error"></div>
     </div>
@@ -35,10 +41,11 @@
     <script>
         function submitManualInput() {
             const input = document.getElementById('manual-input').value;
+            const constraintsInput = document.getElementById('manual-input-2').value;
             fetch('/process', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ type: 'manual', data: input })
+                body: JSON.stringify({ type: 'manual', data: input, constraints: constraintsInput })
             })
             .then(response => response.json())
             .then(data => displayOutput(data))
@@ -47,13 +54,16 @@
 
         function submitFileInput() {
             const fileInput = document.getElementById('file-input');
+            const constraintsFile = document.getElementById('constraints-file');
             const file = fileInput.files[0];
+            const constraints = constraintsFile.files[0];
             if (!file) {
                 displayError('Please select a file.');
                 return;
             }
             const formData = new FormData();
             formData.append('file', file);
+            formData.append('constraints', constraints);
             fetch('/process', {
                 method: 'POST',
                 body: formData
@@ -112,7 +122,18 @@
                         style: {
                             'label': 'data(label)',
                             'curve-style': 'bezier',
-                            'target-arrow-shape': 'triangle'
+                            'target-arrow-shape': 'triangle',
+                            'line-color': '#666',
+                            'target-arrow-color': '#666'
+                        }
+                    },
+                    {
+                        selector: 'edge[constraint_based]',
+                        style: {
+                            'line-color': '#f39c12',
+                            'target-arrow-color': '#f39c12',
+                            'line-style': 'dashed',
+                            'width': 3
                         }
                     }
                 ],

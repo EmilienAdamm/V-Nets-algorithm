@@ -26,7 +26,7 @@ def calculate_intervals(group):
         intervals.append((e_i, e_j, [delta, delta]))
     return intervals
 
-def vnda(sequences):
+def vnda(sequences, constraints=None):
     """Implement Vásquez Net Discovery Algorithm (VNDA)."""
     # Initialize V-net components
     E = set(sequences['EventType'])
@@ -45,6 +45,34 @@ def vnda(sequences):
     # Calculate temporal constraints
     for seq_id, group in sequences.groupby('SequenceID'):
         T.extend(calculate_intervals(group))
+    
+    # Apply user-defined constraints if provided
+    constraint_based_edges = set()
+    if constraints is not None:
+        # Create a lookup dictionary for constraints
+        constraint_dict = {}
+        for _, row in constraints.iterrows():
+            key = (row['Event1ID'], row['Event2ID'])
+            constraint_dict[key] = [row['MinTime'], row['MaxTime']]
+        
+        # Update T with constraint values where applicable
+        updated_T = []
+        for e_i, e_j, [i_minus, i_plus] in T:
+            if (e_i, e_j) in constraint_dict:
+                # Use constraint values and mark as constraint-based
+                updated_T.append((e_i, e_j, constraint_dict[(e_i, e_j)]))
+                constraint_based_edges.add((e_i, e_j))
+            else:
+                # Keep original calculated values
+                updated_T.append((e_i, e_j, [i_minus, i_plus]))
+        T = updated_T
+        
+        # Add any additional constraints that weren't found in the calculated intervals
+        existing_pairs = {(e_i, e_j) for e_i, e_j, _ in T}
+        for (e_i, e_j), [min_time, max_time] in constraint_dict.items():
+            if (e_i, e_j) not in existing_pairs and e_i in E and e_j in E:
+                T.append((e_i, e_j, [min_time, max_time]))
+                constraint_based_edges.add((e_i, e_j))
 
     # Construct occurrence matrices
     matrices = []
@@ -67,7 +95,10 @@ def vnda(sequences):
     for e in E:
         G.add_node(e, init=(e in INIT), end=(e in END))
     for e_i, e_j, [i_minus, i_plus] in T:
-        G.add_edge(e_i, e_j, label=f"{e_i}^1[{i_minus},{i_plus}]^1{e_j}")
+        is_constraint_based = (e_i, e_j) in constraint_based_edges
+        G.add_edge(e_i, e_j, 
+                  label=f"{e_i}^1[{i_minus},{i_plus}]^1{e_j}",
+                  constraint_based=is_constraint_based)
 
     return {
         'E': list(E),
@@ -114,7 +145,8 @@ def convert_graph_to_cytoscape(G):
             'data': {
                 'source': source,
                 'target': target,
-                'label': data['label']
+                'label': data['label'],
+                'constraint_based': data.get('constraint_based', False)
             }
         })
     return elements
@@ -130,6 +162,7 @@ def process():
     """Process event sequence input and generate V-net."""
     try:
         if 'file' in request.files:
+            # File mode
             file = request.files['file']
             if file.filename.endswith('.csv'):
                 df = pd.read_csv(file)
@@ -137,17 +170,31 @@ def process():
                 df = pd.read_csv(file, sep='\t')
             else:
                 return jsonify({'error': 'Unsupported file format. Use .csv or .txt'}), 400
+            
+            # Constraints file
+            constraints = None
+            if 'constraints' in request.files:
+                constraints = pd.read_csv(request.files['constraints'])
+                if not all(col in constraints.columns for col in ['Event1ID', 'Event2ID', 'MinTime', 'MaxTime']):
+                    return jsonify({'error': 'Constraints file must contain Event1ID, Event2ID, MinTime, MaxTime columns'}), 400
+                
         else:
+            # Manual mode
             data = request.json
             if data['type'] != 'manual':
                 return jsonify({'error': 'Invalid input type'}), 400
             df = pd.read_csv(io.StringIO(data['data']))
+            constraints = None
+            if data.get('constraints'):
+                constraints = pd.read_csv(io.StringIO(data['constraints']))
+                if not all(col in constraints.columns for col in ['Event1ID', 'Event2ID', 'MinTime', 'MaxTime']):
+                    return jsonify({'error': 'Constraints file must contain Event1ID, Event2ID, MinTime, MaxTime columns'}), 400
         
         valid, error = validate_data(df)
         if not valid:
             return jsonify({'error': error}), 400
 
-        vnet = vnda(df)
+        vnet = vnda(df, constraints=constraints)
         textual_output = format_textual_output(vnet)
         graph_output = convert_graph_to_cytoscape(vnet['graph'])
 
