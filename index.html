@@ -2,45 +2,395 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>V-net Automatic Generation Tool</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.19.0/cytoscape.min.js"></script>
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        #input-section, #output-section { margin-bottom: 20px; }
-        #cy { width: 100%; height: 500px; border: 1px solid #ccc; }
-        textarea, input, button { margin: 10px 0; }
-        .error { color: red; }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            color: #2c3e50;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+            padding: 30px 0;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: #2c3e50;
+            margin-bottom: 10px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            color: #7f8c8d;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 40px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            border: 1px solid rgba(255,255,255,0.2);
+            backdrop-filter: blur(10px);
+        }
+
+        .card h2 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #2c3e50;
+            margin-bottom: 25px;
+            padding-bottom: 10px;
+            border-bottom: 3px solid #3498db;
+            display: inline-block;
+        }
+
+        .card h3 {
+            font-size: 1.2rem;
+            font-weight: 500;
+            color: #34495e;
+            margin: 25px 0 15px 0;
+        }
+
+        .input-group {
+            margin-bottom: 25px;
+        }
+
+        .input-group label {
+            display: block;
+            font-weight: 500;
+            color: #2c3e50;
+            margin-bottom: 8px;
+            font-size: 0.95rem;
+        }
+
+        textarea, input[type="file"] {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e1e8ed;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            transition: all 0.3s ease;
+            background: #fafbfc;
+        }
+
+        textarea:focus, input[type="file"]:focus {
+            outline: none;
+            border-color: #3498db;
+            box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1);
+            background: white;
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 120px;
+        }
+
+        input[type="file"] {
+            padding: 10px;
+            cursor: pointer;
+        }
+
+        button {
+            background: linear-gradient(135deg, #3498db, #2980b9);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            width: 100%;
+            margin-top: 15px;
+        }
+
+        button:hover {
+            background: linear-gradient(135deg, #2980b9, #1f5f8b);
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(52, 152, 219, 0.3);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        .output-section {
+            grid-column: 1 / -1;
+        }
+
+        .output-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        .graph-container {
+            grid-column: 1 / -1;
+        }
+
+        #cy {
+            width: 100%;
+            height: 500px;
+            border: 2px solid #e1e8ed;
+            border-radius: 12px;
+            background: white;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.05);
+        }
+
+        #text-output {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            min-height: 200px;
+            border: 2px solid #34495e;
+        }
+
+        #warnings-output {
+            background: #fafbfc;
+            padding: 20px;
+            border-radius: 8px;
+            border: 2px solid #e1e8ed;
+            min-height: 200px;
+        }
+
+        #warnings-output ul {
+            list-style: none;
+        }
+
+        #warnings-output li {
+            padding: 10px 15px;
+            margin: 8px 0;
+            border-radius: 6px;
+            border-left: 4px solid;
+        }
+
+        .warning-matched {
+            background: #fdf2f2;
+            border-left-color: #e74c3c !important;
+            color: #c0392b !important;
+        }
+
+        .warning-ok {
+            background: #f0f9f0;
+            border-left-color: #27ae60 !important;
+            color: #1e8449 !important;
+        }
+
+        .error {
+            background: #fdf2f2;
+            color: #e74c3c;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #fadbd8;
+            margin: 15px 0;
+            font-weight: 500;
+        }
+
+        .placeholder-text {
+            color: #7f8c8d;
+            font-style: italic;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .container {
+                padding: 15px;
+            }
+
+            .header h1 {
+                font-size: 2rem;
+            }
+
+            .main-grid {
+                grid-template-columns: 1fr;
+                gap: 20px;
+            }
+
+            .output-grid {
+                grid-template-columns: 1fr;
+                gap: 20px;
+            }
+
+            .card {
+                padding: 20px;
+            }
+
+            #cy {
+                height: 400px;
+            }
+
+            textarea {
+                min-height: 100px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .header h1 {
+                font-size: 1.8rem;
+            }
+
+            .card {
+                padding: 15px;
+            }
+
+            .card h2 {
+                font-size: 1.3rem;
+            }
+
+            #cy {
+                height: 300px;
+            }
+        }
+
+        /* Loading animation */
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 10px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #a8a8a8;
+        }
     </style>
 </head>
+
 <body>
-    <h1>V-net Automatic Generation Tool</h1>
-    <div id="input-section">
-        <h2>Input Event Sequences</h2>
-        <h3>Manual Input</h3>
-        <textarea id="manual-input" rows="10" cols="50" placeholder="Format:    SequenceID,EventType,Timestamp\nSequence1,e1,1.049432\nSequence1,e2,1.606904"></textarea><br>
-        <h3>Timing Constraints (optional)</h3>
-        <textarea id="manual-input-2" rows="10" cols="50" placeholder="Format: Event1ID,Event2ID,MinTime,MaxTime\ne1,2,1.0,2.0"></textarea><br>
-        <h3>Warning Predicates (optional)</h3>
-        <textarea id="manual-input-3" rows="5" cols="60" placeholder="Examples:&#10;Frec(a)=2&#10;b->c before d&#10;Frec(a)>=1 ∧ Frec(b)=0"></textarea><br>
-        <button onclick="submitManualInput()">Submit Manual Input</button>
-        <h3>File Upload</h3>
-        <label>Event Sequences File</label><br>
-        <input type="file" id="file-input" accept=".csv,.txt"><br>
-        <label>Timing Constraints File (optional)</label><br>
-        <input type="file" id="constraints-file" accept=".csv"><br>
-        <label>Warning Predicates File (optional)</label><br>
-        <input type="file" id="predicates-file" accept=".csv"><br>
-        <button onclick="submitFileInput()">Upload File</button>
-        <div id="error-message" class="error"></div>
-    </div>
-    <div id="output-section">
-        <h2>V-net Output</h2>
-        <h3>Textual Representation</h3>
-        <pre id="text-output"></pre>
-        <h3>Warning Predicates Evaluation</h3>
-        <div id="warnings-output"></div>
-        <h3>Graphical Representation</h3>
-        <div id="cy"></div>
+    <div class="container">
+        <div class="header">
+            <h1>V-net Automatic Generation Tool</h1>
+            <p>Generate and visualize V-net models from event sequences with timing constraints and warning predicates</p>
+        </div>
+
+        <div class="main-grid">
+            <div class="card">
+                <h2>Input Event Sequences</h2>
+                
+                <h3>Manual Input</h3>
+                <div class="input-group">
+                    <textarea id="manual-input" placeholder="Format: SequenceID,EventType,Timestamp&#10;Sequence1,e1,1.049432&#10;Sequence1,e2,1.606904"></textarea>
+                </div>
+
+                <h3>Timing Constraints (optional)</h3>
+                <div class="input-group">
+                    <textarea id="manual-input-2" placeholder="Format: Event1ID,Event2ID,MinTime,MaxTime&#10;e1,e2,1.0,2.0"></textarea>
+                </div>
+
+                <h3>Warning Predicates (optional)</h3>
+                <div class="input-group">
+                    <textarea id="manual-input-3" placeholder="Examples:&#10;Frec(a)=2&#10;b->c before d&#10;Frec(a)>=1 ∧ Frec(b)=0"></textarea>
+                </div>
+
+                <button onclick="submitManualInput()">Submit Manual Input</button>
+            </div>
+
+            <div class="card">
+                <h2>File Upload</h2>
+                
+                <div class="input-group">
+                    <label>Event Sequences File</label>
+                    <input type="file" id="file-input" accept=".csv,.txt">
+                </div>
+
+                <div class="input-group">
+                    <label>Timing Constraints File (optional)</label>
+                    <input type="file" id="constraints-file" accept=".csv">
+                </div>
+
+                <div class="input-group">
+                    <label>Warning Predicates File (optional)</label>
+                    <input type="file" id="predicates-file" accept=".csv">
+                </div>
+
+                <button onclick="submitFileInput()">Upload Files</button>
+
+                <div id="error-message" class="error" style="display: none;"></div>
+            </div>
+        </div>
+
+        <div class="card output-section">
+            <h2>V-net Output</h2>
+            
+            <div class="output-grid">
+                <div>
+                    <h3>Textual Representation</h3>
+                    <pre id="text-output"></pre>
+                </div>
+
+                <div>
+                    <h3>Warning Predicates Evaluation</h3>
+                    <div id="warnings-output">
+                        <p class="placeholder-text">No warning predicates provided.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="graph-container">
+                <h3>Graphical Representation</h3>
+                <div id="cy"></div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -48,6 +398,7 @@
             const input = document.getElementById('manual-input').value;
             const constraintsInput = document.getElementById('manual-input-2').value;
             const predicatesInput = document.getElementById('manual-input-3').value;
+
             fetch('/process', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -65,14 +416,17 @@
             const file = fileInput.files[0];
             const constraints = constraintsFile.files[0];
             const predicates = predicatesFile.files[0];
+
             if (!file) {
                 displayError('Please select a file.');
                 return;
             }
+
             const formData = new FormData();
             formData.append('file', file);
             formData.append('constraints', constraints);
             formData.append('predicates', predicates);
+
             fetch('/process', {
                 method: 'POST',
                 body: formData
@@ -83,7 +437,10 @@
         }
 
         function displayOutput(data) {
-            document.getElementById('error-message').innerText = '';
+            const errorDiv = document.getElementById('error-message');
+            errorDiv.style.display = 'none';
+            errorDiv.innerText = '';
+            
             document.getElementById('text-output').innerText = data.textual || 'No output generated.';
             
             // Display warnings
@@ -92,15 +449,14 @@
                 let warningsHtml = '<ul>';
                 data.warnings.forEach(warning => {
                     const className = warning.matched ? 'warning-matched' : 'warning-ok';
-                    const style = warning.matched ? 'color: red; font-weight: bold;' : 'color: green;';
-                    warningsHtml += `<li style="${style}" class="${className}">
+                    warningsHtml += `<li class="${className}">
                         <strong>${warning.predicate}:</strong> ${warning.message}
                     </li>`;
                 });
                 warningsHtml += '</ul>';
                 warningsDiv.innerHTML = warningsHtml;
             } else {
-                warningsDiv.innerHTML = '<p style="color: gray;">No warning predicates provided.</p>';
+                warningsDiv.innerHTML = '<p class="placeholder-text">No warning predicates provided.</p>';
             }
             
             if (data.graph) {
@@ -109,9 +465,12 @@
         }
 
         function displayError(message) {
-            document.getElementById('error-message').innerText = message;
+            const errorDiv = document.getElementById('error-message');
+            errorDiv.style.display = 'block';
+            errorDiv.innerText = message;
+            
             document.getElementById('text-output').innerText = '';
-            document.getElementById('warnings-output').innerHTML = '';
+            document.getElementById('warnings-output').innerHTML = '<p class="placeholder-text">No warning predicates provided.</p>';
             document.getElementById('cy').innerHTML = '';
         }
 
@@ -167,6 +526,7 @@
                 ],
                 layout: { name: 'grid' }
             });
+
             cy.zoomingEnabled(true);
             cy.panningEnabled(true);
         }
