@@ -94,7 +94,10 @@ def vnda(sequences, constraints=None):
     # Construct graph topology
     G = nx.DiGraph()
     for e in E:
-        G.add_node(e, init=(e in INIT), end=(e in END))
+        is_init = e in INIT
+        is_end = e in END
+        G.add_node(e, init=is_init, end=is_end)
+        
     for e_i, e_j, [i_minus, i_plus] in T:
         is_constraint_based = (e_i, e_j) in constraint_based_edges
         G.add_edge(e_i, e_j, 
@@ -134,13 +137,17 @@ def convert_graph_to_cytoscape(G):
     """Convert NetworkX graph to Cytoscape.js format."""
     elements = []
     for node, data in G.nodes(data=True):
-        elements.append({
+        is_init = data.get('init', False)
+        is_end = data.get('end', False)
+        
+        node_element = {
             'data': {
                 'id': node,
-                'init': data.get('init', False),
-                'end': data.get('end', False)
+                'init': 'true' if is_init else 'false',
+                'end': 'true' if is_end else 'false'
             }
-        })
+        }
+        elements.append(node_element)
     for source, target, data in G.edges(data=True):
         elements.append({
             'data': {
