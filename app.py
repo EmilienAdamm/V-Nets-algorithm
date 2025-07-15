@@ -78,13 +78,24 @@ def vnda(sequences, constraints=None):
     # Construct occurrence matrices
     matrices = []
     for seq_id, group in sequences.groupby('SequenceID'):
-        matrix = {e: [0] * (len(group) + 1) for e in E}
-        matrix['INIT'] = [0] * (len(group) + 1)
-        matrix['END'] = [0] * (len(group) + 1)
-        matrix['INIT'][0] = 1
-        matrix['END'][-1] = 1
-        for i, event in enumerate(group['EventType']):
-            matrix[event][i + 1] = 1
+        events_list = group['EventType'].tolist()
+        num_occurrences = len(events_list)
+        
+        # Create matrix with rows as occurrence positions and columns as events
+        matrix = {}
+        
+        # INIT row - mark the first event
+        matrix['INIT'] = {e: 1 if e == events_list[0] else 0 for e in E}
+        
+        # Occurrence rows (Oc1, Oc2, ...) - middle events only (exclude first and last)
+        for i in range(1, len(events_list) - 1):
+            event = events_list[i]
+            oc_label = f"Oc{i}"
+            matrix[oc_label] = {e: 1 if e == event else 0 for e in E}
+        
+        # END row - mark the last event
+        matrix['END'] = {e: 1 if e == events_list[-1] else 0 for e in E}
+        
         matrices.append(matrix)
 
     # Define logical predicates (simplified)
@@ -128,9 +139,19 @@ def format_textual_output(vnet):
     lines.append(f"tl_eval = {vnet['tl_eval']}")
     for i, matrix in enumerate(vnet['matrices'], 1):
         lines.append(f"\nMATRIX {i}")
-        lines.append("\t" + "\t".join([''] + list(vnet['E'])))
-        for key in matrix:
-            lines.append(f"\t{key}\t" + "\t".join(str(v) for v in matrix[key]))
+        
+        # Column headers: events
+        sorted_events = sorted(vnet['E'])
+        lines.append("\t" + "\t".join([''] + sorted_events))
+        
+        # Display INIT first, then Oc1, Oc2, ..., then END
+        occurrence_keys = [k for k in matrix.keys() if k.startswith('Oc')]
+        occurrence_keys.sort(key=lambda x: int(x[2:]))  # Sort Oc1, Oc2, etc. numerically
+        ordered_keys = ['INIT'] + occurrence_keys + ['END']
+        
+        for row_key in ordered_keys:
+            row_values = [str(matrix[row_key][event]) for event in sorted_events]
+            lines.append(f"\t{row_key}\t" + "\t".join(row_values))
     return "\n".join(lines)
 
 def convert_graph_to_cytoscape(G):
