@@ -34,6 +34,10 @@ def vnda(sequences, constraints=None):
     INIT = set(sequences.groupby('SequenceID').first()['EventType'])
     END = set(sequences.groupby('SequenceID').last()['EventType'])
     Frec = sequences['EventType'].value_counts().to_dict()
+    
+    # Calculate event absence probability
+    event_absence_prob = {e: round(1 - Frec.get(e, 0)/len(sequences['SequenceID'].unique()), 3) for e in E}
+    
     T = []
     R = []
 
@@ -119,6 +123,7 @@ def vnda(sequences, constraints=None):
         'E': list(E),
         'T': T,
         'Frec': Frec,
+        'AbsenceProb': event_absence_prob,
         'R': R,
         'INIT': list(INIT),
         'END': list(END),
@@ -133,6 +138,7 @@ def format_textual_output(vnet):
     lines.append(f"E = {{{', '.join(vnet['E'])}}}")
     lines.append("T = {" + ", ".join(f"{e_i}^1[{i_minus},{i_plus}]^1{e_j}" for e_i, e_j, [i_minus, i_plus] in vnet['T']) + "}")
     lines.append(f"Frec = {{{', '.join(f'{k}: {v}' for k, v in vnet['Frec'].items())}}}")
+    lines.append("AbsenceProb = {" + ", ".join(f"{k}: {v}" for k, v in vnet['AbsenceProb'].items()) + "}")
     lines.append(f"R = {{{', '.join(vnet['R'])}}}")
     lines.append(f"INIT = {{{', '.join(vnet['INIT'])}}}")
     lines.append(f"END = {{{', '.join(vnet['END'])}}}")
@@ -154,18 +160,23 @@ def format_textual_output(vnet):
             lines.append(f"\t{row_key}\t" + "\t".join(row_values))
     return "\n".join(lines)
 
-def convert_graph_to_cytoscape(G):
+def convert_graph_to_cytoscape(vnet):
     """Convert NetworkX graph to Cytoscape.js format."""
+    G = vnet['graph']
     elements = []
     for node, data in G.nodes(data=True):
         is_init = data.get('init', False)
         is_end = data.get('end', False)
+        absence_prob = vnet['AbsenceProb'].get(node, 0)
+        highlight_yellow = absence_prob > 0
         
         node_element = {
             'data': {
                 'id': node,
                 'init': 'true' if is_init else 'false',
-                'end': 'true' if is_end else 'false'
+                'end': 'true' if is_end else 'false',
+                'absence_prob': absence_prob,
+                'highlight_yellow': 'true' if highlight_yellow else 'false'
             }
         }
         elements.append(node_element)
@@ -376,7 +387,7 @@ def process():
 
         vnet = vnda(df, constraints=constraints)
         textual_output = format_textual_output(vnet)
-        graph_output = convert_graph_to_cytoscape(vnet['graph'])
+        graph_output = convert_graph_to_cytoscape(vnet)
         
         # Evaluate warning predicates if provided
         warnings = []
