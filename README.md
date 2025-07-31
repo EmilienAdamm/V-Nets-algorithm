@@ -6,8 +6,8 @@ A client-side web application that implements the Vásquez Net Discovery Algorit
 
 - Process event sequences from CSV/TXT files or manual input
 - Apply temporal constraints 
-- Generate V-net visualizations with sequence tracking
-- Color-coded edges showing which sequence generated each transition
+- Generate V-net visualizations with aggregated timing intervals
+- Clean representation showing min/max intervals across all sequences
 - Evaluate warning predicates
 - Interactive web interface
 - Pure client-side processing (no server required)

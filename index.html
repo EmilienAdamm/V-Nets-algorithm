@@ -390,10 +390,9 @@
                 <h3>Graphical Representation</h3>
                 <div style="margin-bottom: 10px; padding: 10px; background: #f8f9fa; border-radius: 6px; font-size: 0.9rem; color: #6c757d;">
                     <strong>Legend:</strong> 
-                    Each edge shows the sequence ID in brackets [SeqID]. 
-                    Different sequences are colored differently. 
+                    Each edge shows aggregated timing intervals [min, max] across all sequences. 
                     Constraint-based edges are shown in orange and dashed.
-                    Triangles = INIT events, Circles = END events, Yellow = Events with absence probability > 0
+                    Triangles = INIT events, Circles = END events, Purple pentagons = Both INIT and END events, Yellow = Events with absence probability > 0
                 </div>
                 <div id="cy"></div>
             </div>
@@ -453,8 +452,8 @@
             return { valid: true, error: "" };
         }
 
-        // Calculate temporal intervals between consecutive events
-        function calculateIntervals(group, sequenceId) {
+        // Calculate temporal intervals between consecutive events for a single sequence
+        function calculateSequenceIntervals(group) {
             const intervals = [];
             for (let i = 0; i < group.length - 1; i++) {
                 const ei = group[i].EventType;
@@ -462,9 +461,37 @@
                 const ej = group[i + 1].EventType;
                 const tj = parseFloat(group[i + 1].Timestamp);
                 const delta = Math.round((tj - ti) * 100) / 100;
-                intervals.push([ei, ej, [delta, delta], sequenceId]);
+                intervals.push([ei, ej, delta]);
             }
             return intervals;
+        }
+
+        // Aggregate intervals across all sequences to find min/max for each event pair
+        function aggregateIntervals(grouped) {
+            const intervalMap = new Map();
+            
+            // Collect all intervals from all sequences
+            Object.entries(grouped).forEach(([seqId, group]) => {
+                const intervals = calculateSequenceIntervals(group);
+                intervals.forEach(([ei, ej, delta]) => {
+                    const key = `${ei}->${ej}`;
+                    if (!intervalMap.has(key)) {
+                        intervalMap.set(key, []);
+                    }
+                    intervalMap.get(key).push(delta);
+                });
+            });
+            
+            // Calculate min/max for each event pair
+            const aggregatedIntervals = [];
+            intervalMap.forEach((deltas, key) => {
+                const [ei, ej] = key.split('->');
+                const minDelta = Math.min(...deltas);
+                const maxDelta = Math.max(...deltas);
+                aggregatedIntervals.push([ei, ej, [minDelta, maxDelta]]);
+            });
+            
+            return aggregatedIntervals;
         }
 
         // Group data by SequenceID
@@ -518,12 +545,8 @@
                 eventAbsenceProb[event] = Math.round((1 - (Frec[event] || 0) / totalSequences) * 1000) / 1000;
             });
             
-            let T = [];
-            
-            // Calculate temporal constraints
-            Object.entries(grouped).forEach(([seqId, group]) => {
-                T.push(...calculateIntervals(group, seqId));
-            });
+            // Calculate aggregated temporal constraints
+            let T = aggregateIntervals(grouped);
             
             // Apply user-defined constraints if provided
             const constraintBasedEdges = new Set();
@@ -535,13 +558,13 @@
                 });
                 
                 const updatedT = [];
-                T.forEach(([ei, ej, interval, seqId]) => {
+                T.forEach(([ei, ej, interval]) => {
                     const key = `${ei},${ej}`;
                     if (constraintDict[key]) {
-                        updatedT.push([ei, ej, constraintDict[key], seqId]);
+                        updatedT.push([ei, ej, constraintDict[key]]);
                         constraintBasedEdges.add(key);
                     } else {
-                        updatedT.push([ei, ej, interval, seqId]);
+                        updatedT.push([ei, ej, interval]);
                     }
                 });
                 T = updatedT;
@@ -551,7 +574,7 @@
                 Object.entries(constraintDict).forEach(([key, interval]) => {
                     const [ei, ej] = key.split(',');
                     if (!existingPairs.has(key) && E.has(ei) && E.has(ej)) {
-                        T.push([ei, ej, interval, 'constraint']);
+                        T.push([ei, ej, interval]);
                         constraintBasedEdges.add(key);
                     }
                 });
@@ -613,13 +636,11 @@
                     end: END.has(event),
                     absence_prob: eventAbsenceProb[event] || 0
                 })),
-                edges: T.map(([ei, ej, [iMinus, iPlus], seqId]) => ({
+                edges: T.map(([ei, ej, [iMinus, iPlus]]) => ({
                     source: ei,
                     target: ej,
                     label: `${ei}^1[${iMinus},${iPlus}]^1${ej}`,
-                    sequence_label: seqId === 'constraint' ? 'C' : seqId,
-                    constraint_based: constraintBasedEdges.has(`${ei},${ej}`),
-                    sequence_id: seqId
+                    constraint_based: constraintBasedEdges.has(`${ei},${ej}`)
                 }))
             };
             
@@ -641,8 +662,8 @@
         function formatTextualOutput(vnet) {
             const lines = ["V-net Definition:"];
             lines.push(`E = {${vnet.E.join(', ')}}`);
-            lines.push("T = {" + vnet.T.map(([ei, ej, [iMinus, iPlus], seqId]) => 
-                `${ei}^1[${iMinus},${iPlus}]^1${ej} (seq:${seqId})`).join(', ') + "}");
+            lines.push("T = {" + vnet.T.map(([ei, ej, [iMinus, iPlus]]) => 
+                `${ei}^1[${iMinus},${iPlus}]^1${ej}`).join(', ') + "}");
             lines.push(`Frec = {${Object.entries(vnet.Frec).map(([k, v]) => `${k}: ${v}`).join(', ')}}`);
             lines.push("AbsenceProb = {" + Object.entries(vnet.AbsenceProb).map(([k, v]) => `${k}: ${v}`).join(', ') + "}");
             lines.push(`R = {${vnet.R.join(', ')}}`);
@@ -696,9 +717,7 @@
                         source: edge.source,
                         target: edge.target,
                         label: edge.label,
-                        sequence_label: edge.sequence_label,
-                        constraint_based: edge.constraint_based,
-                        sequence_id: edge.sequence_id
+                        constraint_based: edge.constraint_based
                     }
                 });
             });
@@ -1009,17 +1028,24 @@
                         }
                     },
                     {
-                        selector: 'node[init = "true"]',
+                        selector: 'node[init = "true"][end = "false"]',
                         style: {
                             'shape': 'triangle',
                             'background-color': '#00f'
                         }
                     },
                     {
-                        selector: 'node[end = "true"]',
+                        selector: 'node[init = "false"][end = "true"]',
                         style: {
                             'shape': 'circle',
                             'background-color': '#f00'
+                        }
+                    },
+                    {
+                        selector: 'node[init = "true"][end = "true"]',
+                        style: {
+                            'shape': 'pentagon',
+                            'background-color': '#9b59b6'
                         }
                     },
                     {
@@ -1034,42 +1060,21 @@
                     {
                         selector: 'edge',
                         style: {
-                            'label': function(ele) {
-                                const seqLabel = ele.data('sequence_label');
-                                const mainLabel = ele.data('label');
-                                return seqLabel ? `${mainLabel}\n[${seqLabel}]` : mainLabel;
-                            },
+                            'label': 'data(label)',
                             'curve-style': 'bezier',
                             'target-arrow-shape': 'triangle',
-                            'line-color': function(ele) {
-                                const seqId = ele.data('sequence_id');
-                                if (seqId === 'constraint') return '#f39c12';
-                                // Generate colors based on sequence ID
-                                const colors = ['#3498db', '#e74c3c', '#2ecc71', '#9b59b6', '#f1c40f', '#e67e22', '#1abc9c', '#34495e'];
-                                const hash = seqId.split('').reduce((a, b) => {
-                                    a = ((a << 5) - a) + b.charCodeAt(0);
-                                    return a & a;
-                                }, 0);
-                                return colors[Math.abs(hash) % colors.length];
-                            },
-                            'target-arrow-color': function(ele) {
-                                const seqId = ele.data('sequence_id');
-                                if (seqId === 'constraint') return '#f39c12';
-                                const colors = ['#3498db', '#e74c3c', '#2ecc71', '#9b59b6', '#f1c40f', '#e67e22', '#1abc9c', '#34495e'];
-                                const hash = seqId.split('').reduce((a, b) => {
-                                    a = ((a << 5) - a) + b.charCodeAt(0);
-                                    return a & a;
-                                }, 0);
-                                return colors[Math.abs(hash) % colors.length];
-                            },
+                            'line-color': '#666',
+                            'target-arrow-color': '#666',
                             'font-size': '10px',
                             'text-wrap': 'wrap',
-                            'text-max-width': '100px'
+                            'text-max-width': '120px'
                         }
                     },
                     {
                         selector: 'edge[constraint_based]',
                         style: {
+                            'line-color': '#f39c12',
+                            'target-arrow-color': '#f39c12',
                             'line-style': 'dashed',
                             'width': 3
                         }
