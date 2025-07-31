@@ -1,54 +1,39 @@
 # V-Nets Algorithm Implementation
 
-A Flask web application that implements the Vásquez Net Discovery Algorithm (VNDA) for event sequence analysis.
+A client-side web application that implements the Vásquez Net Discovery Algorithm (VNDA) for event sequence analysis.
 
 ## Features
 
 - Process event sequences from CSV/TXT files or manual input
 - Apply temporal constraints 
-- Generate V-net visualizations
+- Generate V-net visualizations with sequence tracking
+- Color-coded edges showing which sequence generated each transition
 - Evaluate warning predicates
 - Interactive web interface
+- Pure client-side processing (no server required)
 
 ## Quick Start
 
-### Option 1: Docker (Recommended)
+### Option 1: Direct Use (Recommended)
 
-1. **Prerequisites**: Docker and Docker Compose installed
+1. **Download**: Simply download the `index.html` file
+2. **Open**: Double-click the file or open it in any web browser
+3. **Use**: The application runs entirely in your browser - no setup required!
 
-2. **Run the application**:
+### Option 2: Web Hosting
+
+1. **Upload** the `index.html` file to any web server
+2. **Access** via the server URL
+3. **Examples**: GitHub Pages, Netlify, Vercel, or any static hosting service
+
+### Option 3: Local Development Server
+
+1. **Prerequisites**: Python 3.x (any version)
+2. **Run a simple server**:
    ```bash
-   docker-compose up --build
+   python -m http.server 8000
    ```
-
-3. **Access the app**: Open http://localhost:5000 in your browser
-
-4. **Stop the application**:
-   ```bash
-   docker-compose down
-   ```
-
-### Option 2: Manual Setup
-
-1. **Prerequisites**: Python 3.11+
-
-2. **Create virtual environment**:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-3. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Run the application**:
-   ```bash
-   python app.py
-   ```
-
-5. **Access the app**: Open http://localhost:5000 in your browser
+3. **Access**: Open http://localhost:8000 in your browser
 
 ## Usage
 
@@ -59,8 +44,10 @@ A Flask web application that implements the Vásquez Net Discovery Algorithm (VN
 
 ## File Structure
 
-- `app.py` - Main Flask application
-- `index.html` - Web interface
-- `requirements.txt` - Python dependencies
-- `Dockerfile` - Docker configuration
-- `docker-compose.yml` - Docker Compose setup
+- `index.html` - Complete web application (frontend + backend logic)
+- `README.md` - Documentation
+- `inputs.txt` - Sample input data
+- `app.py` - Legacy Flask application (no longer needed)
+- `requirements.txt` - Legacy Python dependencies (no longer needed)
+- `Dockerfile` - Legacy Docker configuration (no longer needed)
+- `docker-compose.yml` - Legacy Docker setup (no longer needed)

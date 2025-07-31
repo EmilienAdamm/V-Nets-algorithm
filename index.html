@@ -388,52 +388,570 @@
 
             <div class="graph-container">
                 <h3>Graphical Representation</h3>
+                <div style="margin-bottom: 10px; padding: 10px; background: #f8f9fa; border-radius: 6px; font-size: 0.9rem; color: #6c757d;">
+                    <strong>Legend:</strong> 
+                    Each edge shows the sequence ID in brackets [SeqID]. 
+                    Different sequences are colored differently. 
+                    Constraint-based edges are shown in orange and dashed.
+                    Triangles = INIT events, Circles = END events, Yellow = Events with absence probability > 0
+                </div>
                 <div id="cy"></div>
             </div>
         </div>
     </div>
 
     <script>
-        function submitManualInput() {
-            const input = document.getElementById('manual-input').value;
-            const constraintsInput = document.getElementById('manual-input-2').value;
-            const predicatesInput = document.getElementById('manual-input-3').value;
+        // CSV parsing utility
+        function parseCSV(text, delimiter = ',') {
+            const lines = text.trim().split('\n');
+            const headers = lines[0].split(delimiter).map(h => h.trim());
+            const data = [];
+            
+            for (let i = 1; i < lines.length; i++) {
+                const values = lines[i].split(delimiter).map(v => v.trim());
+                const row = {};
+                headers.forEach((header, index) => {
+                    row[header] = values[index];
+                });
+                data.push(row);
+            }
+            
+            return data;
+        }
 
-            fetch('/process', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ type: 'manual', data: input, constraints: constraintsInput, predicates: predicatesInput })
-            })
-            .then(response => response.json())
-            .then(data => displayOutput(data))
-            .catch(error => displayError(error.message));
+        // Data validation
+        function validateData(data) {
+            const requiredCols = ['SequenceID', 'EventType', 'Timestamp'];
+            
+            if (!data || data.length === 0) {
+                return { valid: false, error: "No data provided" };
+            }
+            
+            // Check required columns
+            const cols = Object.keys(data[0]);
+            for (const col of requiredCols) {
+                if (!cols.includes(col)) {
+                    return { valid: false, error: `Missing required column: ${col}` };
+                }
+            }
+            
+            // Validate timestamps are numeric
+            for (const row of data) {
+                const timestamp = parseFloat(row.Timestamp);
+                if (isNaN(timestamp)) {
+                    return { valid: false, error: "Timestamps must be numeric" };
+                }
+            }
+            
+            // Validate event types are alphanumeric
+            for (const row of data) {
+                if (!row.EventType || !/^[a-zA-Z0-9_]+$/.test(row.EventType)) {
+                    return { valid: false, error: "Event types must be alphanumeric strings" };
+                }
+            }
+            
+            return { valid: true, error: "" };
+        }
+
+        // Calculate temporal intervals between consecutive events
+        function calculateIntervals(group, sequenceId) {
+            const intervals = [];
+            for (let i = 0; i < group.length - 1; i++) {
+                const ei = group[i].EventType;
+                const ti = parseFloat(group[i].Timestamp);
+                const ej = group[i + 1].EventType;
+                const tj = parseFloat(group[i + 1].Timestamp);
+                const delta = Math.round((tj - ti) * 100) / 100;
+                intervals.push([ei, ej, [delta, delta], sequenceId]);
+            }
+            return intervals;
+        }
+
+        // Group data by SequenceID
+        function groupBySequenceID(data) {
+            const groups = {};
+            data.forEach(row => {
+                const seqId = row.SequenceID;
+                if (!groups[seqId]) {
+                    groups[seqId] = [];
+                }
+                groups[seqId].push(row);
+            });
+            
+            // Sort each group by timestamp
+            Object.keys(groups).forEach(seqId => {
+                groups[seqId].sort((a, b) => parseFloat(a.Timestamp) - parseFloat(b.Timestamp));
+            });
+            
+            return groups;
+        }
+
+        // Main VNDA algorithm
+        function vnda(sequences, constraints = null) {
+            const data = sequences;
+            const grouped = groupBySequenceID(data);
+            
+            // Initialize V-net components
+            const E = new Set();
+            const INIT = new Set();
+            const END = new Set();
+            const Frec = {};
+            
+            // Calculate event sets and frequencies
+            data.forEach(row => {
+                E.add(row.EventType);
+                Frec[row.EventType] = (Frec[row.EventType] || 0) + 1;
+            });
+            
+            // Calculate INIT and END sets
+            Object.values(grouped).forEach(group => {
+                if (group.length > 0) {
+                    INIT.add(group[0].EventType);
+                    END.add(group[group.length - 1].EventType);
+                }
+            });
+            
+            // Calculate event absence probability
+            const totalSequences = Object.keys(grouped).length;
+            const eventAbsenceProb = {};
+            E.forEach(event => {
+                eventAbsenceProb[event] = Math.round((1 - (Frec[event] || 0) / totalSequences) * 1000) / 1000;
+            });
+            
+            let T = [];
+            
+            // Calculate temporal constraints
+            Object.entries(grouped).forEach(([seqId, group]) => {
+                T.push(...calculateIntervals(group, seqId));
+            });
+            
+            // Apply user-defined constraints if provided
+            const constraintBasedEdges = new Set();
+            if (constraints) {
+                const constraintDict = {};
+                constraints.forEach(row => {
+                    const key = `${row.Event1ID},${row.Event2ID}`;
+                    constraintDict[key] = [parseFloat(row.MinTime), parseFloat(row.MaxTime)];
+                });
+                
+                const updatedT = [];
+                T.forEach(([ei, ej, interval, seqId]) => {
+                    const key = `${ei},${ej}`;
+                    if (constraintDict[key]) {
+                        updatedT.push([ei, ej, constraintDict[key], seqId]);
+                        constraintBasedEdges.add(key);
+                    } else {
+                        updatedT.push([ei, ej, interval, seqId]);
+                    }
+                });
+                T = updatedT;
+                
+                // Add any additional constraints not found in calculated intervals
+                const existingPairs = new Set(T.map(([ei, ej]) => `${ei},${ej}`));
+                Object.entries(constraintDict).forEach(([key, interval]) => {
+                    const [ei, ej] = key.split(',');
+                    if (!existingPairs.has(key) && E.has(ei) && E.has(ej)) {
+                        T.push([ei, ej, interval, 'constraint']);
+                        constraintBasedEdges.add(key);
+                    }
+                });
+            }
+            
+            // Calculate tl_eval (maximum time length across sequences)
+            let tlEval = 0;
+            Object.values(grouped).forEach(group => {
+                if (group.length > 0) {
+                    const maxTime = Math.max(...group.map(row => parseFloat(row.Timestamp)));
+                    const minTime = Math.min(...group.map(row => parseFloat(row.Timestamp)));
+                    tlEval = Math.max(tlEval, maxTime - minTime);
+                }
+            });
+            tlEval = Math.round(tlEval * 1000000) / 1000000;
+            
+            // Construct occurrence matrices
+            const matrices = [];
+            Object.values(grouped).forEach(group => {
+                const eventsList = group.map(row => row.EventType);
+                const matrix = {};
+                
+                // INIT row
+                matrix['INIT'] = {};
+                E.forEach(event => {
+                    matrix['INIT'][event] = eventsList[0] === event ? 1 : 0;
+                });
+                
+                // Occurrence rows (middle events only)
+                for (let i = 1; i < eventsList.length - 1; i++) {
+                    const event = eventsList[i];
+                    const ocLabel = `Oc${i}`;
+                    matrix[ocLabel] = {};
+                    E.forEach(e => {
+                        matrix[ocLabel][e] = e === event ? 1 : 0;
+                    });
+                }
+                
+                // END row
+                matrix['END'] = {};
+                E.forEach(event => {
+                    matrix['END'][event] = eventsList[eventsList.length - 1] === event ? 1 : 0;
+                });
+                
+                matrices.push(matrix);
+            });
+            
+            // Define logical predicates
+            const R = [
+                `INIT(${Array.from(INIT).join(',')})`,
+                `END(${Array.from(END).join(',')})`
+            ];
+            
+            // Create graph structure
+            const graph = {
+                nodes: Array.from(E).map(event => ({
+                    id: event,
+                    init: INIT.has(event),
+                    end: END.has(event),
+                    absence_prob: eventAbsenceProb[event] || 0
+                })),
+                edges: T.map(([ei, ej, [iMinus, iPlus], seqId]) => ({
+                    source: ei,
+                    target: ej,
+                    label: `${ei}^1[${iMinus},${iPlus}]^1${ej}`,
+                    sequence_label: seqId === 'constraint' ? 'C' : seqId,
+                    constraint_based: constraintBasedEdges.has(`${ei},${ej}`),
+                    sequence_id: seqId
+                }))
+            };
+            
+            return {
+                E: Array.from(E),
+                T: T,
+                Frec: Frec,
+                AbsenceProb: eventAbsenceProb,
+                R: R,
+                INIT: Array.from(INIT),
+                END: Array.from(END),
+                tl_eval: tlEval,
+                matrices: matrices,
+                graph: graph
+            };
+        }
+
+        // Format textual output
+        function formatTextualOutput(vnet) {
+            const lines = ["V-net Definition:"];
+            lines.push(`E = {${vnet.E.join(', ')}}`);
+            lines.push("T = {" + vnet.T.map(([ei, ej, [iMinus, iPlus], seqId]) => 
+                `${ei}^1[${iMinus},${iPlus}]^1${ej} (seq:${seqId})`).join(', ') + "}");
+            lines.push(`Frec = {${Object.entries(vnet.Frec).map(([k, v]) => `${k}: ${v}`).join(', ')}}`);
+            lines.push("AbsenceProb = {" + Object.entries(vnet.AbsenceProb).map(([k, v]) => `${k}: ${v}`).join(', ') + "}");
+            lines.push(`R = {${vnet.R.join(', ')}}`);
+            lines.push(`INIT = {${vnet.INIT.join(', ')}}`);
+            lines.push(`END = {${vnet.END.join(', ')}}`);
+            lines.push(`tl_eval = ${vnet.tl_eval}`);
+            
+            vnet.matrices.forEach((matrix, i) => {
+                lines.push(`\nMATRIX ${i + 1}`);
+                
+                const sortedEvents = vnet.E.slice().sort();
+                lines.push("\t" + [' '].concat(sortedEvents).join("\t"));
+                
+                const occurrenceKeys = Object.keys(matrix).filter(k => k.startsWith('Oc'))
+                    .sort((a, b) => parseInt(a.substring(2)) - parseInt(b.substring(2)));
+                const orderedKeys = ['INIT'].concat(occurrenceKeys).concat(['END']);
+                
+                orderedKeys.forEach(rowKey => {
+                    if (matrix[rowKey]) {
+                        const rowValues = sortedEvents.map(event => matrix[rowKey][event] || 0);
+                        lines.push(`\t${rowKey}\t` + rowValues.join("\t"));
+                    }
+                });
+            });
+            
+            return lines.join("\n");
+        }
+
+        // Convert graph to Cytoscape format
+        function convertGraphToCytoscape(vnet) {
+            const elements = [];
+            
+            // Add nodes
+            vnet.graph.nodes.forEach(node => {
+                const highlightYellow = node.absence_prob > 0;
+                elements.push({
+                    data: {
+                        id: node.id,
+                        init: node.init ? 'true' : 'false',
+                        end: node.end ? 'true' : 'false',
+                        absence_prob: node.absence_prob,
+                        highlight_yellow: highlightYellow ? 'true' : 'false'
+                    }
+                });
+            });
+            
+            // Add edges
+            vnet.graph.edges.forEach(edge => {
+                elements.push({
+                    data: {
+                        source: edge.source,
+                        target: edge.target,
+                        label: edge.label,
+                        sequence_label: edge.sequence_label,
+                        constraint_based: edge.constraint_based,
+                        sequence_id: edge.sequence_id
+                    }
+                });
+            });
+            
+            return elements;
+        }
+
+        // Parse warning predicates
+        function parseWarningPredicates(predicatesText) {
+            if (!predicatesText || !predicatesText.trim()) {
+                return [];
+            }
+            
+            return predicatesText.trim().split('\n')
+                .map(line => line.trim())
+                .filter(line => line.length > 0);
+        }
+
+        // Evaluate frequency predicate
+        function evaluateFrequencyPredicate(predicate, vnet) {
+            const pattern = /Frec\(([a-zA-Z0-9_]+)\)\s*(>=|<=|>|<|=|!=)\s*(\d+)/;
+            const match = predicate.match(pattern);
+            
+            if (!match) {
+                return { result: false, detail: `Invalid frequency predicate format: ${predicate}` };
+            }
+            
+            const [, event, operator, value] = match;
+            const numValue = parseInt(value);
+            const actualFreq = vnet.Frec[event] || 0;
+            
+            let result;
+            switch (operator) {
+                case '=': result = actualFreq === numValue; break;
+                case '>=': result = actualFreq >= numValue; break;
+                case '<=': result = actualFreq <= numValue; break;
+                case '>': result = actualFreq > numValue; break;
+                case '<': result = actualFreq < numValue; break;
+                case '!=': result = actualFreq !== numValue; break;
+                default: return { result: false, detail: `Unsupported operator: ${operator}` };
+            }
+            
+            return { result, detail: `Frec(${event}) = ${actualFreq} ${operator} ${numValue}` };
+        }
+
+        // Evaluate temporal predicate
+        function evaluateTemporalPredicate(predicate, vnet) {
+            const pattern = /([a-zA-Z0-9_]+)->([a-zA-Z0-9_]+)\s+before\s+([a-zA-Z0-9_]+)/;
+            const match = predicate.match(pattern);
+            
+            if (!match) {
+                return { result: false, detail: `Invalid temporal predicate format: ${predicate}` };
+            }
+            
+            const [, event1, event2, event3] = match;
+            
+            // Check if the edge event1->event2 exists and event3 exists
+            const hasEdge = vnet.graph.edges.some(edge => 
+                edge.source === event1 && edge.target === event2);
+            const hasEvent3 = vnet.E.includes(event3);
+            
+            if (!hasEdge) {
+                return { result: false, detail: `Edge ${event1}->${event2} not found in V-net` };
+            }
+            
+            if (!hasEvent3) {
+                return { result: false, detail: `Event ${event3} not found in V-net` };
+            }
+            
+            return { result: true, detail: `Transition ${event1}->${event2} exists and ${event3} is present` };
+        }
+
+        // Evaluate logical predicate
+        function evaluateLogicalPredicate(predicate, vnet) {
+            // Split by logical AND operator
+            if (predicate.includes('∧')) {
+                const parts = predicate.split('∧').map(p => p.trim());
+                const results = [];
+                const details = [];
+                
+                for (const part of parts) {
+                    let evalResult;
+                    if (part.startsWith('Frec(')) {
+                        evalResult = evaluateFrequencyPredicate(part, vnet);
+                    } else if (part.includes('->') && part.includes('before')) {
+                        evalResult = evaluateTemporalPredicate(part, vnet);
+                    } else {
+                        evalResult = { result: false, detail: `Unknown predicate type: ${part}` };
+                    }
+                    
+                    results.push(evalResult.result);
+                    details.push(evalResult.detail);
+                }
+                
+                const finalResult = results.every(r => r);
+                return { result: finalResult, detail: details.join(' AND ') };
+            }
+            
+            // Single predicate
+            if (predicate.startsWith('Frec(')) {
+                return evaluateFrequencyPredicate(predicate, vnet);
+            } else if (predicate.includes('->') && predicate.includes('before')) {
+                return evaluateTemporalPredicate(predicate, vnet);
+            } else {
+                return { result: false, detail: `Unknown predicate type: ${predicate}` };
+            }
+        }
+
+        // Check warning predicates
+        function checkWarningPredicates(predicates, vnet) {
+            const warnings = [];
+            
+            predicates.forEach(predicate => {
+                try {
+                    const evaluation = evaluateLogicalPredicate(predicate, vnet);
+                    warnings.push({
+                        predicate: predicate,
+                        matched: evaluation.result,
+                        detail: evaluation.detail,
+                        message: evaluation.result ? 
+                            `WARNING: Condition matched - ${evaluation.detail}` :
+                            `OK: Condition not matched - ${evaluation.detail}`
+                    });
+                } catch (error) {
+                    warnings.push({
+                        predicate: predicate,
+                        matched: false,
+                        detail: error.message,
+                        message: `ERROR: Failed to evaluate predicate - ${error.message}`
+                    });
+                }
+            });
+            
+            return warnings;
+        }
+
+        // Process data and generate V-net
+        function processData(sequences, constraints = null, predicates = null) {
+            try {
+                const validation = validateData(sequences);
+                if (!validation.valid) {
+                    throw new Error(validation.error);
+                }
+                
+                const vnet = vnda(sequences, constraints);
+                const textualOutput = formatTextualOutput(vnet);
+                const graphOutput = convertGraphToCytoscape(vnet);
+                
+                let warnings = [];
+                if (predicates && predicates.length > 0) {
+                    warnings = checkWarningPredicates(predicates, vnet);
+                }
+                
+                return {
+                    textual: textualOutput,
+                    graph: graphOutput,
+                    warnings: warnings
+                };
+            } catch (error) {
+                throw new Error(error.message);
+            }
+        }
+
+        // Updated submission functions
+        function submitManualInput() {
+            try {
+                const input = document.getElementById('manual-input').value;
+                const constraintsInput = document.getElementById('manual-input-2').value;
+                const predicatesInput = document.getElementById('manual-input-3').value;
+                
+                if (!input.trim()) {
+                    displayError('Please provide event sequence data.');
+                    return;
+                }
+                
+                const sequences = parseCSV(input);
+                const constraints = constraintsInput.trim() ? parseCSV(constraintsInput) : null;
+                const predicates = predicatesInput.trim() ? parseWarningPredicates(predicatesInput) : null;
+                
+                const result = processData(sequences, constraints, predicates);
+                displayOutput(result);
+            } catch (error) {
+                displayError(error.message);
+            }
         }
 
         function submitFileInput() {
             const fileInput = document.getElementById('file-input');
             const constraintsFile = document.getElementById('constraints-file');
             const predicatesFile = document.getElementById('predicates-file');
-            const file = fileInput.files[0];
-            const constraints = constraintsFile.files[0];
-            const predicates = predicatesFile.files[0];
-
-            if (!file) {
+            
+            if (!fileInput.files[0]) {
                 displayError('Please select a file.');
                 return;
             }
-
-            const formData = new FormData();
-            formData.append('file', file);
-            formData.append('constraints', constraints);
-            formData.append('predicates', predicates);
-
-            fetch('/process', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => displayOutput(data))
-            .catch(error => displayError(error.message));
+            
+            const readers = [];
+            
+            // Read main file
+            readers.push(new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = e => resolve({ type: 'main', content: e.target.result });
+                reader.onerror = reject;
+                reader.readAsText(fileInput.files[0]);
+            }));
+            
+            // Read constraints file if provided
+            if (constraintsFile.files[0]) {
+                readers.push(new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = e => resolve({ type: 'constraints', content: e.target.result });
+                    reader.onerror = reject;
+                    reader.readAsText(constraintsFile.files[0]);
+                }));
+            }
+            
+            // Read predicates file if provided
+            if (predicatesFile.files[0]) {
+                readers.push(new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = e => resolve({ type: 'predicates', content: e.target.result });
+                    reader.onerror = reject;
+                    reader.readAsText(predicatesFile.files[0]);
+                }));
+            }
+            
+            Promise.all(readers).then(results => {
+                try {
+                    let sequences, constraints = null, predicates = null;
+                    
+                    results.forEach(result => {
+                        switch (result.type) {
+                            case 'main':
+                                const separator = fileInput.files[0].name.endsWith('.txt') ? '\t' : ',';
+                                sequences = parseCSV(result.content, separator);
+                                break;
+                            case 'constraints':
+                                constraints = parseCSV(result.content);
+                                break;
+                            case 'predicates':
+                                predicates = parseWarningPredicates(result.content);
+                                break;
+                        }
+                    });
+                    
+                    const output = processData(sequences, constraints, predicates);
+                    displayOutput(output);
+                } catch (error) {
+                    displayError(error.message);
+                }
+            }).catch(error => {
+                displayError('Failed to read files: ' + error.message);
+            });
         }
 
         function displayOutput(data) {
@@ -516,18 +1034,42 @@
                     {
                         selector: 'edge',
                         style: {
-                            'label': 'data(label)',
+                            'label': function(ele) {
+                                const seqLabel = ele.data('sequence_label');
+                                const mainLabel = ele.data('label');
+                                return seqLabel ? `${mainLabel}\n[${seqLabel}]` : mainLabel;
+                            },
                             'curve-style': 'bezier',
                             'target-arrow-shape': 'triangle',
-                            'line-color': '#666',
-                            'target-arrow-color': '#666'
+                            'line-color': function(ele) {
+                                const seqId = ele.data('sequence_id');
+                                if (seqId === 'constraint') return '#f39c12';
+                                // Generate colors based on sequence ID
+                                const colors = ['#3498db', '#e74c3c', '#2ecc71', '#9b59b6', '#f1c40f', '#e67e22', '#1abc9c', '#34495e'];
+                                const hash = seqId.split('').reduce((a, b) => {
+                                    a = ((a << 5) - a) + b.charCodeAt(0);
+                                    return a & a;
+                                }, 0);
+                                return colors[Math.abs(hash) % colors.length];
+                            },
+                            'target-arrow-color': function(ele) {
+                                const seqId = ele.data('sequence_id');
+                                if (seqId === 'constraint') return '#f39c12';
+                                const colors = ['#3498db', '#e74c3c', '#2ecc71', '#9b59b6', '#f1c40f', '#e67e22', '#1abc9c', '#34495e'];
+                                const hash = seqId.split('').reduce((a, b) => {
+                                    a = ((a << 5) - a) + b.charCodeAt(0);
+                                    return a & a;
+                                }, 0);
+                                return colors[Math.abs(hash) % colors.length];
+                            },
+                            'font-size': '10px',
+                            'text-wrap': 'wrap',
+                            'text-max-width': '100px'
                         }
                     },
                     {
                         selector: 'edge[constraint_based]',
                         style: {
-                            'line-color': '#f39c12',
-                            'target-arrow-color': '#f39c12',
                             'line-style': 'dashed',
                             'width': 3
                         }
